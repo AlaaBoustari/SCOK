@@ -40,7 +40,11 @@
 
     const roomsElement = document.querySelector("#rooms");
     const status = document.querySelector("#status");
-    document.querySelector("#welcome").textContent = `Signed in as ${SCOK.username()}`;
+    SCOK.requireSession().then(authenticated => {
+        if (authenticated) {
+            document.querySelector("#welcome").textContent = `Signed in as ${SCOK.username()}`;
+        }
+    });
 
     function openRoom(roomId) {
         location.href = `/chat.html?roomId=${roomId}`;

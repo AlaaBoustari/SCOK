@@ -6,8 +6,11 @@
     <title>SCOK</title>
 </head>
 <body>
+<script src="/app.js"></script>
 <script>
-    location.replace(localStorage.getItem("accessToken") ? "/rooms.html" : "/login.html");
+    SCOK.requireSession().then(ready => {
+        if (ready) location.replace("/rooms.html");
+    });
 </script>
 </body>
 </html>

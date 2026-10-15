@@ -1,78 +1,148 @@
 package org.langost.scok.service;
 
-
-import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
 import org.langost.scok.config.tokens.JwtService;
-import org.langost.scok.config.tokens.RefreshTokenService;
 import org.langost.scok.dto.request.LoginRequest;
-import org.langost.scok.dto.request.RefreshRequest;
-import org.langost.scok.dto.request.SignUpRequest;
 import org.langost.scok.dto.response.AuthResponse;
-import org.langost.scok.dto.response.SignUpResponse;
 import org.langost.scok.entity.User;
 import org.langost.scok.repository.UserRepository;
 import org.springframework.http.HttpStatus;
-import org.springframework.security.authentication.AuthenticationManager;
-import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
-import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.oauth2.client.registration.ClientRegistration;
+import org.springframework.security.oauth2.client.registration.ClientRegistrationRepository;
+import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
+import software.amazon.awssdk.services.cognitoidentityprovider.CognitoIdentityProviderClient;
+import  software.amazon.awssdk.services.cognitoidentityprovider.model.*;
+
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
+import java.nio.charset.StandardCharsets;
+import java.security.GeneralSecurityException;
+import java.util.Base64;
+import java.util.Map;
+import java.time.Duration;
+import java.time.Instant;
 
 @Service
 @RequiredArgsConstructor
 public class AuthService {
-
-    private final UserRepository userRepository;
-    private final PasswordEncoder passwordEncoder;
-    private final AuthenticationManager authenticationManager;
-    private final RefreshTokenService refreshTokenService;
+    private final CognitoIdentityProviderClient cognito;
+    private final ClientRegistrationRepository registrations;
     private final JwtService jwtService;
+    private final UserRepository users;
+    private final CognitoUserService cognitoUserService;
 
-    public AuthResponse login(LoginRequest loginRequest){
+    public record Tokens(String accessToken, String refreshToken) {}
 
-        authenticationManager.authenticate(
-                new UsernamePasswordAuthenticationToken(loginRequest.email(),loginRequest.password())
-        );
-
-        User user = userRepository.findByEmail(loginRequest.email())
-                    .orElseThrow(()->new ResponseStatusException(HttpStatus.UNAUTHORIZED));
-
-        return issueTokens(user);
+    public boolean signup(org.langost.scok.dto.request.SignUpRequest signup) {
+        SignUpResponse result = cognito.signUp(SignUpRequest.builder()
+                .clientId(registrations.findByRegistrationId("cognito").getClientId())
+                .username(signup.email())
+                .password(signup.password())
+                .secretHash(secretHash(signup.email()))
+                .userAttributes(
+                        AttributeType.builder().name("email").value(signup.email()).build(),
+                        AttributeType.builder().name("preferred_username").value(signup.username()).build())
+                .build());
+        return Boolean.TRUE.equals(result.userConfirmed());
     }
 
+    public void confirmSignup(String email, String code) {
+        cognito.confirmSignUp(ConfirmSignUpRequest.builder()
+                .clientId(registrations.findByRegistrationId("cognito").getClientId())
+                .username(email)
+                .confirmationCode(code)
+                .secretHash(secretHash(email))
+                .build());
+    }
 
-    @Transactional
-    public SignUpResponse signup(SignUpRequest signUpRequest){
+    public void resendConfirmation(String email) {
+        cognito.resendConfirmationCode(ResendConfirmationCodeRequest.builder()
+                .clientId(registrations.findByRegistrationId("cognito").getClientId())
+                .username(email)
+                .secretHash(secretHash(email))
+                .build());
+    }
 
-        if(userRepository.existsByEmail(signUpRequest.email())){
-            throw new ResponseStatusException(HttpStatus.CONFLICT,"user deja kayn");
+    public Tokens login(LoginRequest login) {
+        InitiateAuthResponse result = cognito.initiateAuth(InitiateAuthRequest.builder()
+                .clientId(registrations.findByRegistrationId("cognito").getClientId())
+                .authFlow(AuthFlowType.USER_PASSWORD_AUTH)
+                .authParameters(Map.of(
+                        "USERNAME", login.email(),
+                        "PASSWORD", login.password(),
+                        "SECRET_HASH", secretHash(login.email())))
+                .build());
+
+        AuthenticationResultType tokens = result.authenticationResult();
+        if (tokens == null) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "This account needs an additional step. 5dm b Cognito login button.");
         }
 
-        User user = new User();
-        user.setEmail(signUpRequest.email());
-        user.setPasswordHash(passwordEncoder.encode(signUpRequest.password()));
-        user.setUsername(signUpRequest.username());
-        userRepository.save(user);
-
-        return new SignUpResponse(user.getId(),user.getUsername());
+        Jwt identity = jwtService.decodeIdToken(tokens.idToken());
+        try {
+            cognitoUserService.resolveOrCreate(identity.getSubject(),
+                    identity.getClaimAsString("email"), identity.getClaimAsString("preferred_username"));
+        } catch (OAuth2AuthenticationException ex) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, ex.getMessage());
+        }
+        return new Tokens(tokens.accessToken(), tokens.refreshToken());
     }
 
-    @Transactional
-    public AuthResponse refresh(RefreshRequest refreshRequest){
-        User user = refreshTokenService.validateAndRotate(refreshRequest.refreshToken());
-        return issueTokens(user);
+    public AuthResponse profile(String token) {
+        Jwt jwt = jwtService.decodeAccessToken(token);
+        User user = users.findByCognitoSub(jwt.getSubject())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Local profile not found"));
+        return new AuthResponse(user.getId(), user.getUsername());
     }
 
-    @Transactional
-    public void logout(User user){
-        refreshTokenService.revokeAllForUser(user);
+    public long accessTokenMaxAge(String token) {
+        return Math.max(0, Duration.between(Instant.now(),
+                jwtService.decodeAccessToken(token).getExpiresAt()).getSeconds());
     }
 
-    private AuthResponse issueTokens(User user){
-        String accessToken = jwtService.generateToken(user);
-        String refreshToken = refreshTokenService.createRefreshToken(user);
-        return new AuthResponse(accessToken,refreshToken,user.getId(), user.getUsername());
+    public Tokens refresh(String refreshToken) {
+        if (refreshToken == null) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Sign in again");
+        }
+        ClientRegistration registration = registrations.findByRegistrationId("cognito");
+        try {
+            GetTokensFromRefreshTokenResponse result = cognito.getTokensFromRefreshToken(
+                    GetTokensFromRefreshTokenRequest.builder()
+                            .clientId(registration.getClientId())
+                            .clientSecret(registration.getClientSecret())
+                            .refreshToken(refreshToken)
+                            .build());
+            AuthenticationResultType tokens = result.authenticationResult();
+            return new Tokens(tokens.accessToken(), tokens.refreshToken());
+        } catch (NotAuthorizedException ex) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Cognito rejected refresh; sign in again");
+        }
+    }
+
+    public void logout(String refreshToken) {
+        if (refreshToken == null) return;
+        ClientRegistration registration = registrations.findByRegistrationId("cognito");
+        cognito.revokeToken(RevokeTokenRequest.builder()
+                .clientId(registration.getClientId())
+                .clientSecret(registration.getClientSecret())
+                .token(refreshToken)
+                .build());
+    }
+
+
+    private String secretHash(String username) {
+        ClientRegistration registration = registrations.findByRegistrationId("cognito");
+        try {
+            Mac mac = Mac.getInstance("HmacSHA256");
+            mac.init(new SecretKeySpec(registration.getClientSecret().getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+            return Base64.getEncoder().encodeToString(mac.doFinal(
+                    (username + registration.getClientId()).getBytes(StandardCharsets.UTF_8)));
+        } catch (GeneralSecurityException ex) {
+            throw new IllegalStateException("Cannot calculate Cognito client secret hash", ex);
+        }
     }
 }
-

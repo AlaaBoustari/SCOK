@@ -6,13 +6,17 @@
 <body>
     <h1>Open the console (F12)</h1>
     <script src="https://cdn.jsdelivr.net/npm/@stomp/stompjs@7.2.0/bundles/stomp.umd.min.js"></script>
+    <script src="/app.js"></script>
     <script>
-        const accessToken = "eyJ";
         const roomId = 1;
+        const protocol = location.protocol === "https:" ? "wss:" : "ws:";
         const client = new StompJs.Client({
-            brokerURL: "ws://localhost:8080/ws",
-            connectHeaders: {
-                Authorization: `Bearer ${accessToken}`
+            brokerURL: `${protocol}//${location.host}/ws`,
+            async beforeConnect() {
+                if (!await SCOK.requireSession() || !await SCOK.refreshAccessToken()) {
+                    location.replace("/login.html");
+                    throw new Error("Sign in again");
+                }
             },
             debug(message) {
                 console.log("[STOMP]", message);

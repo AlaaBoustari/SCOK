@@ -78,8 +78,11 @@
         client = new StompJs.Client({
             brokerURL: `${protocol}//${location.host}/ws`,
             reconnectDelay: 5000,
-            beforeConnect() {
-                client.connectHeaders = {Authorization: `Bearer ${SCOK.accessToken()}`};
+            async beforeConnect() {
+                if (!await SCOK.refreshAccessToken()) {
+                    location.replace("/login.html");
+                    throw new Error("Sign in again");
+                }
             },
             onConnect() {
                 connection.textContent = "Connected";

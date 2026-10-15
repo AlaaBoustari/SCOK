@@ -26,7 +26,7 @@ public class UserPrincipal implements UserDetails {
 
     @Override
     public @Nullable String getPassword() {
-        return user.getPasswordHash();
+        return null;
     }
 
     @Override

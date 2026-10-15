@@ -1,7 +1,9 @@
 const SCOK = (() => {
+    let sessionReady;
+
     function saveSession(auth) {
-        localStorage.setItem("accessToken", auth.accessToken);
-        localStorage.setItem("refreshToken", auth.refreshToken);
+        localStorage.removeItem("accessToken");
+        localStorage.removeItem("refreshToken");
         localStorage.setItem("userId", auth.userId);
         localStorage.setItem("username", auth.username);
     }
@@ -14,9 +16,23 @@ const SCOK = (() => {
     }
 
     function requireSession() {
-        if (!localStorage.getItem("accessToken")) {
-            location.replace("/login.html");
+        if (!sessionReady) {
+            sessionReady = fetch("/api/auth/me", {cache: "no-store"})
+                .then(async response => {
+                    if (response.ok) {
+                        saveSession(await response.json());
+                    } else if (response.status !== 401 || !await refreshAccessToken()) {
+                        throw new Error("Sign in again");
+                    }
+                    return true;
+                })
+                .catch(() => {
+                    clearSession();
+                    location.replace("/login.html");
+                    return false;
+                });
         }
+        return sessionReady;
     }
 
     async function readResponse(response) {
@@ -32,24 +48,32 @@ const SCOK = (() => {
         }
     }
 
-    async function refreshAccessToken() {
-        const refreshToken = localStorage.getItem("refreshToken");
-        if (!refreshToken) return false;
+    async function csrfHeaders() {
+        const response = await fetch("/api/auth/csrf", {cache: "no-store"});
+        if (!response.ok) throw new Error("Could not obtain CSRF token");
+        const csrf = await response.json();
+        return {[csrf.headerName]: csrf.token};
+    }
 
+    async function refreshAccessToken() {
         const response = await fetch("/api/auth/refresh", {
             method: "POST",
-            headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({refreshToken})
+            headers: await csrfHeaders()
         });
 
-        if (!response.ok) return false;
+        if (!response.ok || response.redirected) return false;
         saveSession(await response.json());
         return true;
     }
 
     async function api(path, options = {}, retry = true) {
+        if (!await requireSession()) throw new Error("Sign in again");
         const headers = new Headers(options.headers || {});
-        headers.set("Authorization", `Bearer ${localStorage.getItem("accessToken")}`);
+        const method = (options.method || "GET").toUpperCase();
+        if (!["GET", "HEAD", "OPTIONS"].includes(method)) {
+            const csrf = await csrfHeaders();
+            for (const [name, value] of Object.entries(csrf)) headers.set(name, value);
+        }
         if (options.body) headers.set("Content-Type", "application/json");
 
         const response = await fetch(path, {...options, headers});
@@ -60,6 +84,10 @@ const SCOK = (() => {
 
         const body = await readResponse(response);
         if (!response.ok) {
+            if (response.status === 401) {
+                clearSession();
+                location.replace("/login.html");
+            }
             const message = body?.message || body?.error || `Request failed (${response.status})`;
             throw new Error(message);
         }
@@ -68,7 +96,10 @@ const SCOK = (() => {
 
     async function logout() {
         try {
-            await api("/api/auth/logout", {method: "POST"});
+            const response = await fetch("/api/auth/logout", {
+                method: "POST", headers: await csrfHeaders()
+            });
+            if (!response.ok) alert("Local logout completed, but Cognito revocation may have failed.");
         } finally {
             clearSession();
             location.replace("/login.html");
@@ -80,8 +111,9 @@ const SCOK = (() => {
         clearSession,
         logout,
         requireSession,
+        refreshAccessToken,
+        csrfHeaders,
         saveSession,
-        accessToken: () => localStorage.getItem("accessToken"),
         userId: () => localStorage.getItem("userId"),
         username: () => localStorage.getItem("username")
     };

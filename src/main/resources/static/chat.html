@@ -27,6 +27,11 @@
             <input id="content" placeholder="Message" autocomplete="off" required>
             <button type="submit">Send</button>
         </form>
+        <form id="upload-form" class="send-form">
+            <input id="image-file" type="file" accept="image/jpeg,image/png" aria-label="Choose a JPEG or PNG image" required>
+            <button id="upload-button" type="submit">Upload image</button>
+        </form>
+        <p id="upload-status" class="status" role="status"></p>
     </div>
 </main>
 
@@ -120,6 +125,47 @@
             body: JSON.stringify({content: input.value})
         });
         input.value = "";
+    });
+
+    document.querySelector("#upload-form").addEventListener("submit", async event => {
+        event.preventDefault();
+        const input = document.querySelector("#image-file");
+        const file = input.files[0];
+        const uploadStatus = document.querySelector("#upload-status");
+        const button = document.querySelector("#upload-button");
+        if (!file) return;
+        if (!["image/jpeg", "image/png"].includes(file.type)) {
+            uploadStatus.textContent = "Choose a JPEG or PNG image.";
+            return;
+        }
+
+        button.disabled = true;
+        uploadStatus.textContent = "Preparing upload...";
+        try {
+            const {uploadUrl, fileKey} = await SCOK.api(`/api/room/${roomId}/uploads`, {
+                method: "POST",
+                body: JSON.stringify({contentType: file.type})
+            });
+
+            uploadStatus.textContent = `Uploading ${file.name}...`;
+            // The signed URL authorizes S3. Do not send our auth cookies or CSRF header.
+            const response = await fetch(uploadUrl, {
+                method: "PUT",
+                credentials: "omit",
+                headers: {"Content-Type": file.type},
+                body: file
+            });
+            if (!response.ok) throw new Error(`S3 upload failed (${response.status}).`);
+
+            uploadStatus.textContent = `Uploaded to S3: ${fileKey}. Message attachments come next.`;
+            input.value = "";
+        } catch (error) {
+            uploadStatus.textContent = error instanceof TypeError
+                    ? "Could not reach S3. Check your connection and the bucket CORS configuration."
+                    : error.message;
+        } finally {
+            button.disabled = false;
+        }
     });
 
     document.querySelector("#leave").addEventListener("click", async () => {

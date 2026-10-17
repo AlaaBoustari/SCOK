@@ -1,6 +1,7 @@
-# Attachment storage and processing with S3 and SQS
+# Claim Check Pattern
+## Attachment storage and processing with S3 and SQS
 
-## Claim Check Pattern
+<img width="1634" height="918" alt="SQS+S3" src="https://github.com/user-attachments/assets/ce4d87b4-5d68-4406-9a03-3d08d8d8a1c5" />
 
 > The idea was to decouple image storage and thumbnail generation by employing S3 and SQS + DLQ.
 
@@ -17,6 +18,8 @@ We use S3 presigned URLs so the browser can upload attachments directly to the p
 ## Detailed sequence diagram
 
 The API and thumbnail worker run in the same Spring Boot application. Once S3 accepts the upload, confirming and sending the chat attachment can happen independently of thumbnail processing.
+
+<img width="8086" height="9474" alt="S3_SQS_SEQUENCEDIAGRAM" src="https://github.com/user-attachments/assets/fe7942a3-7099-4315-875d-e246dc030ded" />
 
 
 ## CCP synthesis

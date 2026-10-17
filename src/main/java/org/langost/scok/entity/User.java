@@ -19,14 +19,14 @@ public class User {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    @Column(name = "cognito_sub", unique = true)
+    private String cognitoSub;
+
     @Column(nullable = false, unique = true)
     private String email;
 
     @Column(nullable = false)
     private String username;
-
-    @Column(nullable = false)
-    private String passwordHash;
 
     @Enumerated(EnumType.STRING)
     private Role role = Role.USER;

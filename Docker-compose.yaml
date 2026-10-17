@@ -1,0 +1,49 @@
+services:
+  scok:
+    build: .
+    environment:
+      - SPRING_APPLICATION_NAME=SCOK
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://db:5432/scok
+      - SPRING_DATASOURCE_USERNAME=mac
+      - SPRING_DATASOURCE_PASSWORD=Alaa2021
+      - SPRING_JPA_HIBERNATE_DDL_AUTO=update
+      - APP_JWT_EXPIRATION_MS=300000
+      - APP_JWT_SECRET=qiWXpbUUmRfs2xuaR7KvPrprXNTlWCJuq0D1nQ5BcCU
+      - APP_JWT_REFRESH_EXPIRATION_MS=604800000
+      - LOGGING_LEVEL_ORG_SPRINGFRAMEWORK_SECURITY=DEBUG
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:18
+    environment:
+      POSTGRES_PASSWORD: Alaa2021
+      POSTGRES_USER: mac
+      POSTGRES_DB: scok
+    volumes:
+      - database:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL","pg_isready -U mac -d scok"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  web:
+    image: nginx
+    ports:
+      - 80:80
+    volumes:
+      - ./server/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - scok
+
+  adminer:
+    image: adminer:6
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  database:

@@ -29,6 +29,10 @@ public class Message {
     @JoinColumn(name = "room_id",nullable = false)
     private Room room;
 
+    @OneToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "attachment_id", unique = true)
+    private Attachment attachment;
+
     @CreationTimestamp
     private Instant sentAt;
 }

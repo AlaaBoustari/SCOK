@@ -46,7 +46,8 @@ public class MessageController {
         return messageService.sendMessage(
                 roomId,
                 principal.getName(),
-                request.content());
+                request.content(),
+                request.attachmentId());
 
     }
 

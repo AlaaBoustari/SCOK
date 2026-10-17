@@ -16,49 +16,68 @@
 
         <form id="login-form">
             <h2>Login</h2>
-            <input id="login-email" type="email" placeholder="Email" required>
-            <input id="login-password" type="password" placeholder="Password" minlength="8" required>
+            <input id="login-email" type="email" placeholder="Email" autocomplete="username" required>
+            <input id="login-password" type="password" placeholder="Password" autocomplete="current-password" minlength="8" required>
             <button type="submit">Login</button>
         </form>
 
         <form id="signup-form">
             <h2>Sign up</h2>
-            <input id="signup-username" placeholder="Username" required>
-            <input id="signup-email" type="email" placeholder="Email" required>
-            <input id="signup-password" type="password" placeholder="Password" minlength="8" required>
+            <input id="signup-username" placeholder="Username" autocomplete="nickname" required>
+            <input id="signup-email" type="email" placeholder="Email" autocomplete="email" required>
+            <input id="signup-password" type="password" placeholder="Password" autocomplete="new-password" minlength="8" required>
             <button type="submit">Create account</button>
         </form>
 
+        <form id="confirm-form" style="display:none">
+            <h2>Confirm your email</h2>
+            <input id="confirm-email" type="email" placeholder="Email" required>
+            <input id="confirm-code" placeholder="Code from your email" autocomplete="one-time-code" required>
+            <button type="submit">Confirm email</button>
+            <button id="resend-code" type="button" class="secondary">Resend code</button>
+        </form>
+
+        <a href="/oauth2/authorization/cognito">Or continue with Cognito / Google</a>
         <p id="status" class="status"></p>
     </section>
 </main>
-
 <script src="/app.js"></script>
 <script>
     const status = document.querySelector("#status");
 
-    async function login(email, password) {
-        const response = await fetch("/api/auth/login", {
+    async function authRequest(path, body) {
+        const headers = await SCOK.csrfHeaders();
+        headers["Content-Type"] = "application/json";
+        const response = await fetch(path, {
             method: "POST",
-            headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({email, password})
+            headers,
+            body: JSON.stringify(body)
         });
-        const body = await response.json();
-        if (!response.ok) throw new Error(body.message || body.error || "Login failed");
-        SCOK.saveSession(body);
+        const result = response.status === 204 ? null : await response.json();
+        if (!response.ok) throw new Error(result?.message || result?.error || "Request failed");
+        return result;
+    }
+
+    function showConfirmation(email) {
+        document.querySelector("#confirm-email").value = email;
+        document.querySelector("#confirm-form").style.display = "";
+    }
+
+    async function login(email, password) {
+        const auth = await authRequest("/api/auth/login", {email, password});
+        SCOK.saveSession(auth);
         location.replace("/rooms.html");
     }
 
     document.querySelector("#login-form").addEventListener("submit", async event => {
         event.preventDefault();
         status.textContent = "";
+        const email = document.querySelector("#login-email").value;
         try {
-            await login(
-                document.querySelector("#login-email").value,
-                document.querySelector("#login-password").value
-            );
+            await login(email, document.querySelector("#login-password").value);
         } catch (error) {
             status.textContent = error.message;
+            if (error.message.includes("Confirm your email")) showConfirmation(email);
         }
     });
 
@@ -67,24 +86,51 @@
         status.textContent = "";
         const email = document.querySelector("#signup-email").value;
         const password = document.querySelector("#signup-password").value;
-
         try {
-            const response = await fetch("/api/auth/signup", {
-                method: "POST",
-                headers: {"Content-Type": "application/json"},
-                body: JSON.stringify({
-                    username: document.querySelector("#signup-username").value,
-                    email,
-                    password
-                })
+            const result = await authRequest("/api/auth/signup", {
+                email, password, username: document.querySelector("#signup-username").value
             });
-            const body = await response.json();
-            if (!response.ok) throw new Error(body.message || body.error || "Signup failed");
-            await login(email, password);
+            document.querySelector("#login-email").value = email;
+            if (result.confirmed) {
+                await login(email, password);
+            } else {
+                showConfirmation(email);
+                status.textContent = "Check your email for the confirmation code.";
+            }
         } catch (error) {
             status.textContent = error.message;
         }
     });
+
+    document.querySelector("#confirm-form").addEventListener("submit", async event => {
+        event.preventDefault();
+        try {
+            await authRequest("/api/auth/confirm", {
+                email: document.querySelector("#confirm-email").value,
+                code: document.querySelector("#confirm-code").value
+            });
+            document.querySelector("#login-email").value = document.querySelector("#confirm-email").value;
+            document.querySelector("#confirm-form").style.display = "none";
+            status.textContent = "Email confirmed. You can now log in.";
+        } catch (error) {
+            status.textContent = error.message;
+        }
+    });
+
+    document.querySelector("#resend-code").addEventListener("click", async () => {
+        try {
+            await authRequest("/api/auth/resend-confirmation", {
+                email: document.querySelector("#confirm-email").value
+            });
+            status.textContent = "A new confirmation code was sent.";
+        } catch (error) {
+            status.textContent = error.message;
+        }
+    });
+
+    if (new URLSearchParams(location.search).has("error")) {
+        status.textContent = "Cognito sign-in failed. An existing local account with this email needs explicit linking.";
+    }
 </script>
 </body>
 </html>

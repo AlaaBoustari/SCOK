@@ -1,0 +1,39 @@
+# Maven
+target/
+!.mvn/wrapper/maven-wrapper.jar
+
+# IDE
+.idea/
+*.iml
+*.iws
+*.ipr
+.vscode/
+.classpath
+.project
+.settings/
+
+# Version Control
+.git/
+.gitignore
+.gitattributes
+
+# Documentation
+*.md
+HELP.md
+
+# Docker
+Dockerfile
+.dockerignore
+Docker-compose.yaml
+docker-compose.yml
+
+# Project specific
+blackhole/
+server/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

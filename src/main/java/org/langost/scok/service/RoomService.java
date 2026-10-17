@@ -51,10 +51,14 @@ public class RoomService {
     }
 
     public RoomResponse getDetails(Long roomId, Long currentUserId) {
+        return toResponse(getRoomForMember(roomId, currentUserId));
+    }
+
+    public Room getRoomForMember(Long roomId, Long currentUserId) {
         if (!roomMembershipRepository.existsByRoomIdAndUserId(roomId, currentUserId)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Not a member of this room");
         }
-        return toResponse(findActiveRoom(roomId));
+        return findActiveRoom(roomId);
     }
 
     public List<RoomResponse> getUserRooms(Long userId){

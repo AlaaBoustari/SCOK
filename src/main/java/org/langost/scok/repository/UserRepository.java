@@ -9,6 +9,7 @@ import java.util.Optional;
 
 public interface UserRepository extends JpaRepository<User,Long> {
 
+    public Optional<User> findByCognitoSub(String sub);
     public Optional<User> findByEmail(String email);
 
     boolean existsByEmail(@Email @NotBlank String email);

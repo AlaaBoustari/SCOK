@@ -8,5 +8,7 @@ public record MessageResponse(
         Long senderId,
         String senderUsername,
         Long roomId,
-        Instant sentAt) {
+        Instant sentAt,
+        Long attachmentId,
+        String attachmentFilename) {
 }

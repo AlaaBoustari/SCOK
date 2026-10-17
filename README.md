@@ -13,45 +13,15 @@ The app has two different login methods: fully managed by AWS and a custom login
 The BFF architecture is a security pattern where the server-side (SpringBoot in our case) handles token negotiation, expiry and validation on behalf of the client. This is achieved by letting the client store HttpOnly Cookies and send them to the server on each request. This prevents frontend JavaScript from reading the authentication cookies.Greatly limiting Cross-Site Scripting.
 
 
-## METHOD UNO: Cloud-managed login
+# Claim Check Pattern
+## Attachment storage and processing with S3 and SQS
 
-The idea here is to let Spring Security handle the authentication flow by exchanging the short-lived authorization code you get upon a successful authentication, through AWS managed interface, for access/refresh Tokens, Spring does this automatically by making a post request to the Cognito’s servers. Our code then handles either:
-
-1. **Resolving or creating the user:** By using the recently created *OidcUser* to populate an identity variable and use it to map the Cognito authenticated user to our database’s User Entity.
-
-2. **Completing the login:** By setting the HttpOnly Cookie containing the tokens and killing the JSESSIONID session identifier cookie, invalidating the temporary session created by spring, clearing the clients registry’s authorized_client entry holding the users info in memory and wiping the security context for that request.
-
-<img width="4652" height="3940" alt="Cloud_Managed_path" src="https://github.com/user-attachments/assets/f8a962aa-f64b-4f47-b833-9ccac7e47e0f" />
+<img width="1634" height="918" alt="SQS+S3" src="https://github.com/user-attachments/assets/ce4d87b4-5d68-4406-9a03-3d08d8d8a1c5" />
 
 
----
 
-## METHOD DOS: Custom login backed by the Cognito API
+> The idea was to decouple image storage and thumbnail generation by employing S3 and SQS + DLQ.
 
-The idea here is to have our own form and fields and using the AWS SDK for Java 2.x with the BUILDER design pattern to build the API request mentioned here: https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/Welcome.html
+Claim Check is an integration pattern used to handle large payloads over lightweight message queues (for example, SQS tops at 1 MiB). So, instead of passing a massive payload directly through a message queue, the system stores the full thing in an external data store and sends only a small reference, the **claim check**, through the message broker.
 
-Then we send the request to Cognito's server, identifying our app with its client ID and authenticating the user with their credentials. Our app client also requires a secret hash.
-
-On success, the AuthenticationResult we get contains multiple attributes such as the ID_Token that we decode using the methods provided by NimusDecoder to get the (the sub, id ,email…) in order to resolve the local user as well as THE  ACCESS AND REFRESH TOKENS that we send through the AuthController in the form of HttpCookie to the client. This flow does NOT require authentication but rather WHEN the frontend resends said cookie with each request it is later treated and validated by SpringSecurity.
-
-<img width="5026" height="5826" alt="USERNAME_PASSWORD_AUTHPATH" src="https://github.com/user-attachments/assets/37eb9f48-f6c2-4566-bd45-6063626360b9" />
-
----
-
-## Shared flows: CSRF and authorization
-
-*While the flow of getting the tokens differs, once they are in HttpOnly cookies through `completeLogin()` or a POST to `/api/auth/login`, both flows converge.*
-
-The client calls **`requireSession()`** to send a request to `/api/auth/me`. The backend uses the current authenticated principal to return the local user ID and username as JSON. If the access token is missing or expired, the stored refresh token is sent back as a cookie and passed upward to Cognito's servers. If it is still valid, we get a new access token, which is sent back as a cookie. The existing refresh cookie stays unless Cognito returns a rotated refresh token, in which case we replace it too. Otherwise, you have to sign in again. For an API request returning **401**, the client attempts refresh and retries the original request **once**.
-
-### CSRF
-
-Before state-changing requests, JavaScript obtains a CSRF token through **`csrfHeaders()`** and attaches the returned header. Spring Security's **`CsrfFilter`** validates it against the expected token stored in the CSRF cookie and rejects missing or invalid tokens.
-
-<img width="5674" height="7204" alt="shared_flow" src="https://github.com/user-attachments/assets/a4909e08-86c1-46cc-9df1-5bb3a744615c" />
-
----
-
-## AUTH synthesis
-
-By applying a **Backend-for-Frontend architecture** that I `totally` knew before I implemented, we made our **API authentication STATELESS**, with server-side token validation and an authenticated WebSocket handshake upgrade using **Cognito-issued JWTs**.
+In our case, we store the message’s attachment in S3 and send an **“All object create events”** notification to SQS containing the bucket name and object key. Our Java worker “long-polls” the queue using Spring Cloud AWS, produces a thumbnail using Thumbnailator, updates the DB, and passes the acknowledgement so the queue can safely remove the message instead of passing it to the dead-letter queue.

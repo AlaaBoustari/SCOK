@@ -22,8 +22,26 @@ public class UploadController {
             @Valid @RequestBody UploadRequest request,
             @AuthenticationPrincipal UserPrincipal principal) {
         return ResponseEntity.ok().cacheControl(CacheControl.noStore())
-                .body(s3UploadService.initiate(roomId, principal.getUser().getId(), request.contentType()));
+                .body(s3UploadService.initiate(roomId, principal.getUser(), request.filename(), request.contentType()));
     }
 
-    public record UploadRequest(@NotBlank String contentType) {}
+    @PostMapping("/{attachmentId}/complete")
+    public ResponseEntity<Void> complete(
+            @PathVariable Long roomId,
+            @PathVariable Long attachmentId,
+            @AuthenticationPrincipal UserPrincipal principal) {
+        s3UploadService.complete(roomId, attachmentId, principal.getUser().getId());
+        return ResponseEntity.noContent().build();
+    }
+
+    @GetMapping("/{attachmentId}/url")
+    public ResponseEntity<S3UploadService.AttachmentUrls> downloadUrl(
+            @PathVariable Long roomId,
+            @PathVariable Long attachmentId,
+            @AuthenticationPrincipal UserPrincipal principal) {
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore())
+                .body(s3UploadService.downloadUrl(roomId, attachmentId, principal.getUser().getId()));
+    }
+
+    public record UploadRequest(@NotBlank String filename, @NotBlank String contentType) {}
 }

@@ -138,6 +138,20 @@ form {
     color: #c8c8c8;
 }
 
+.attachment-image {
+    display: block;
+    max-width: 100%;
+    width: 260px;
+    max-height: 220px;
+    object-fit: contain;
+    margin-top: 8px;
+    border-radius: 6px;
+}
+
+.attachment-image[hidden] {
+    display: none;
+}
+
 .send-form {
     grid-template-columns: 1fr auto;
     padding-bottom: 8px;

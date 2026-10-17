@@ -24,13 +24,14 @@
     <div>
         <p id="status" class="status"></p>
         <form id="send-form" class="send-form">
-            <input id="content" placeholder="Message" autocomplete="off" required>
-            <button type="submit">Send</button>
+            <input id="content" placeholder="Message or image caption" autocomplete="off">
+            <button id="send-button" type="submit">Send</button>
         </form>
         <form id="upload-form" class="send-form">
             <input id="image-file" type="file" accept="image/jpeg,image/png" aria-label="Choose a JPEG or PNG image" required>
             <button id="upload-button" type="submit">Upload image</button>
         </form>
+        <img id="upload-preview" class="attachment-image" alt="Selected image" hidden>
         <p id="upload-status" class="status" role="status"></p>
     </div>
 </main>
@@ -45,6 +46,12 @@
     const status = document.querySelector("#status");
     const connection = document.querySelector("#connection");
     let client;
+    let pendingAttachmentId = null;
+    const pendingThumbnails = new Map();
+
+    setInterval(() => {
+        if (!document.hidden) pendingThumbnails.forEach(load => load());
+    }, 5000);
 
     if (!roomId) location.replace("/rooms.html");
 
@@ -60,6 +67,44 @@
         content.textContent = message.content;
 
         bubble.append(sender, content);
+        if (message.attachmentId) {
+            const link = document.createElement("a");
+            link.target = "_blank";
+            link.rel = "noopener noreferrer";
+            const image = document.createElement("img");
+            image.className = "attachment-image";
+            image.alt = message.attachmentFilename;
+            image.loading = "lazy";
+            image.hidden = true;
+            const label = document.createElement("span");
+            label.textContent = "Processing image...";
+            link.append(image, label);
+            bubble.append(link);
+            let loading = false;
+            async function loadThumbnail() {
+                if (loading) return;
+                loading = true;
+                try {
+                    const {downloadUrl, thumbnailUrl} = await SCOK.api(
+                        `/api/room/${roomId}/uploads/${message.attachmentId}/url`);
+                    link.href = downloadUrl;
+                    if (thumbnailUrl) {
+                        image.onload = () => messagesElement.scrollTop = messagesElement.scrollHeight;
+                        image.src = thumbnailUrl;
+                        image.hidden = false;
+                        label.hidden = true;
+                        pendingThumbnails.delete(message.attachmentId);
+                    }
+                } catch (error) {
+                    label.textContent = "Could not load image.";
+                    pendingThumbnails.delete(message.attachmentId);
+                } finally {
+                    loading = false;
+                }
+            }
+            pendingThumbnails.set(message.attachmentId, loadThumbnail);
+            loadThumbnail();
+        }
         messagesElement.append(bubble);
         messagesElement.scrollTop = messagesElement.scrollHeight;
     }
@@ -119,12 +164,19 @@
             return;
         }
 
+        if (!input.value.trim() && !pendingAttachmentId) return;
         client.publish({
             destination: `/app/rooms/${roomId}/messages`,
             headers: {"content-type": "application/json"},
-            body: JSON.stringify({content: input.value})
+            body: JSON.stringify({content: input.value, attachmentId: pendingAttachmentId})
         });
         input.value = "";
+        pendingAttachmentId = null;
+        const preview = document.querySelector("#upload-preview");
+        URL.revokeObjectURL(preview.src);
+        preview.removeAttribute("src");
+        preview.hidden = true;
+        document.querySelector("#upload-status").textContent = "";
     });
 
     document.querySelector("#upload-form").addEventListener("submit", async event => {
@@ -133,6 +185,8 @@
         const file = input.files[0];
         const uploadStatus = document.querySelector("#upload-status");
         const button = document.querySelector("#upload-button");
+        const sendButton = document.querySelector("#send-button");
+        const preview = document.querySelector("#upload-preview");
         if (!file) return;
         if (!["image/jpeg", "image/png"].includes(file.type)) {
             uploadStatus.textContent = "Choose a JPEG or PNG image.";
@@ -140,15 +194,19 @@
         }
 
         button.disabled = true;
+        sendButton.disabled = true;
+        pendingAttachmentId = null;
+        URL.revokeObjectURL(preview.src);
+        preview.src = URL.createObjectURL(file);
+        preview.hidden = false;
         uploadStatus.textContent = "Preparing upload...";
         try {
-            const {uploadUrl, fileKey} = await SCOK.api(`/api/room/${roomId}/uploads`, {
+            const {uploadUrl, attachmentId} = await SCOK.api(`/api/room/${roomId}/uploads`, {
                 method: "POST",
-                body: JSON.stringify({contentType: file.type})
+                body: JSON.stringify({filename: file.name, contentType: file.type})
             });
 
             uploadStatus.textContent = `Uploading ${file.name}...`;
-            // The signed URL authorizes S3. Do not send our auth cookies or CSRF header.
             const response = await fetch(uploadUrl, {
                 method: "PUT",
                 credentials: "omit",
@@ -157,14 +215,20 @@
             });
             if (!response.ok) throw new Error(`S3 upload failed (${response.status}).`);
 
-            uploadStatus.textContent = `Uploaded to S3: ${fileKey}. Message attachments come next.`;
+            await SCOK.api(`/api/room/${roomId}/uploads/${attachmentId}/complete`, {method: "POST"});
+            pendingAttachmentId = attachmentId;
+            uploadStatus.textContent = `${file.name} is ready. Add a caption or press Send.`;
             input.value = "";
         } catch (error) {
+            URL.revokeObjectURL(preview.src);
+            preview.removeAttribute("src");
+            preview.hidden = true;
             uploadStatus.textContent = error instanceof TypeError
                     ? "Could not reach S3. Check your connection and the bucket CORS configuration."
                     : error.message;
         } finally {
             button.disabled = false;
+            sendButton.disabled = false;
         }
     });
 

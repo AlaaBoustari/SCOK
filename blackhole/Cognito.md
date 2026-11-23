@@ -1,6 +1,5 @@
 
-
-
+New concepts Learned :
 
 # SIGN_UP_SYNTAX:
 

@@ -35,3 +35,14 @@ build/
 ### Secrets ###
 
 src/main/resources/application.properties
+
+
+# Terraform local files
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
+
+# macOS
+.DS_Store

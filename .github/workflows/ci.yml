@@ -27,3 +27,15 @@ jobs:
 
       - name: Build and run tests
         run: ./mvnw --batch-mode --no-transfer-progress verify
+
+  docker_img:
+    name: Sock docker image
+    needs: test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checks the code
+        uses: actions/checkout@v6
+
+      - name : Build image
+        run: docker build --platform linux/amd64 --tag scok:ci .

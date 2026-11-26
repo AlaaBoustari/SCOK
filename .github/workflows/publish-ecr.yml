@@ -1,0 +1,48 @@
+name: Publish image l ECR
+
+on: workflow_dispatch
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    env:
+      ECR_REGISTRY: 156084119806.dkr.ecr.eu-west-1.amazonaws.com
+      IMAGE: "156084119806.dkr.ecr.eu-west-1.amazonaws.com/scok:${{ github.sha }}"
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Build and run tests
+        run: ./mvnw --batch-mode --no-transfer-progress verify
+
+      - name: Build the Docker image
+        run: docker build --platform linux/amd64 --tag "$IMAGE" .
+
+      - name: Get temporary AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6.3.1
+        with:
+          role-to-assume: ${{ vars.AWS_ECR_PUBLISH_ROLE_ARN }}
+          aws-region: eu-west-1
+
+      - name: Log in to ECR and push the image
+        shell: bash
+        run: |
+          aws ecr get-login-password --region eu-west-1 |
+          docker login --username AWS --password-stdin "$ECR_REGISTRY"
+          docker push "$IMAGE"

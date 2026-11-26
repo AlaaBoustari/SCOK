@@ -7,3 +7,8 @@ resource "aws_ecr_repository" "scok" {
 output "ecr_repository_url" {
   value = aws_ecr_repository.scok.repository_url
 }
+
+import {
+  to = aws_ecr_repository.scok
+  id = "scok"
+}
